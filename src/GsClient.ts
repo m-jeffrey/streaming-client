@@ -24,8 +24,11 @@ export class GsClient {
     private call: Call;
     private activeSocket: WebSocket | null = null;
     private windowCount: number;
+    private runForCount: number;
     private statsSummary: IStrIndex;
+    private statsRunForTotal: IStrIndex;
     private stats: IStrIndex;
+    private statsRunFor: IStrIndex;
 
     public constructor(env: any, wsUrl: string, oauthUrl: string, oauthOptions: any, call: Call) {
         this.offset = env.OFFSET;
@@ -35,8 +38,11 @@ export class GsClient {
         this.oauthOptions = oauthOptions;
         this.call = call;
         this.windowCount = 0;
+        this.runForCount = 0;
         this.statsSummary = {};
+        this.statsRunForTotal = {};
         this.stats = {};
+        this.statsRunFor = {};
     }
 
     public getClient(): Client {
@@ -157,12 +163,21 @@ export class GsClient {
 
     private setStat(eventName: string): void {
         this.windowCount = this.windowCount + 1; 
+        this.runForCount = this.runForCount + 1;
+
         // total events per event type
         if (!this.statsSummary[eventName]){
             this.statsSummary[eventName] = 1;
         } else {
             this.statsSummary[eventName] = this.statsSummary[eventName] + 1;
         }
+
+        if (!this.statsRunForTotal[eventName]){
+            this.statsRunForTotal[eventName] = 1;
+        } else {
+            this.statsRunForTotal[eventName] = this.statsRunForTotal[eventName] + 1;
+        }
+
          // total events per time bucket
         if (this.env.TIME_BUCKET !== undefined) {
             const now = new Date(Date.now());
@@ -180,8 +195,10 @@ export class GsClient {
             }
             if (!this.stats[timeBucket]){
                 this.stats[timeBucket] = 1;
+                this.statsRunFor[timeBucket] = 1;
             } else {
                 this.stats[timeBucket] = this.stats[timeBucket] + 1;
+                this.statsRunFor[timeBucket] = this.statsRunFor[timeBucket] + 1;
             }
         }
     }
@@ -198,6 +215,23 @@ export class GsClient {
         this.stats = {};
         this.statsSummary = {};
         this.windowCount = 0;
+    }
+
+    private printAndClearStatsRunForTotal(): void {
+        const seconds = Math.floor(this.env.RUN_FOR/1000);
+        if (this.runForCount > 0) {
+            log.info(`${this.runForCount} total events processed in ${seconds} second RUN_FOR window`);
+            console.table(this.statsRunForTotal);
+            
+            //if (this.env.TIME_BUCKET !== undefined) {
+            //    const  avg =  Math.round(Object.values(this.statsRunFor).reduce((prev: number, curr: number) => prev + curr) / Object.values(this.statsRunFor).length);
+            //    this.statsRunFor['AVERAGE per' + this.env.TIME_BUCKET] = avg;
+            //    console.table(this.statsRunFor);
+            //}
+        }
+        this.statsRunFor = {};
+        this.statsRunForTotal = {};
+        this.runForCount = 0;
     }
 
     public async start(): Promise<void> {
@@ -226,6 +260,12 @@ export class GsClient {
             log.debug('Stopping the connection');
             await client.dispose();
             this.activeSocket?.terminate();
+            if (this.windowCount > 0 || this.runForCount > 0) {
+                this.printAndClearStats();
+            }
+            if (this.runForCount > 0) {
+                this.printAndClearStatsRunForTotal();
+            }
             delay(5000);
             try {
                 process.exit(0);
